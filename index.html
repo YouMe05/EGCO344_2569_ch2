@@ -23,6 +23,7 @@
                 border-radius: 12px;
                 box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
                 transition: transform 0.2s;
+                height: 100%;
             }
             .table-card {
                 overflow: hidden;
@@ -36,7 +37,8 @@
             }
             .chart-container {
                 position: relative;
-                height: 40vh;
+                height: 300px; /* Fixed height for consistency */
+                width: 100%;
             }
         </style>
     </head>
@@ -59,7 +61,7 @@
         </nav>
 
         <div class="container-fluid px-4">
-            <div class="row g-4">
+            <div class="row g-4 mb-4">
                 <div class="col-xl-6">
                     <div class="card p-4">
                         <h6 class="fw-bold mb-3">Residential Usage by Province</h6>
@@ -77,7 +79,28 @@
                         </div>
                     </div>
                 </div>
+            </div>
 
+            <div class="row g-4 mb-4">
+                <div class="col-md-6 col-lg-6">
+                    <div class="card p-4">
+                        <h6 class="fw-bold mb-3">Total Usage Composition (National)</h6>
+                        <div class="chart-container">
+                            <canvas id="usagePieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-6">
+                    <div class="card p-4">
+                        <h6 class="fw-bold mb-3">User Type Distribution (National)</h6>
+                        <div class="chart-container">
+                            <canvas id="usersPieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
                 <div class="col-12 mb-5">
                     <div class="card table-card">
                         <div class="p-4 border-bottom">
@@ -108,8 +131,12 @@
         <script>
             let usageData = {};
             let usersData = {};
+            
+            // Chart instances
             let usageChartInstance = null;
             let usersChartInstance = null;
+            let usagePieInstance = null;
+            let usersPieInstance = null;
 
             async function loadData() {
                 try {
@@ -130,7 +157,7 @@
                 const usageFiltered = usageData.Sheet1.filter(item => item.year == year);
                 const usersFiltered = usersData.filter(item => item.year == year);
 
-                // Populate table with formatted numbers
+                // Populate table
                 const tbody = document.querySelector('#dataTable tbody');
                 tbody.innerHTML = usageFiltered.map(usage => {
                     const user = usersFiltered.find(u => u.province_code == usage.province_code);
@@ -148,20 +175,48 @@
                     `;
                 }).join('');
 
-                // Data for charts
+                // Data for Bar/Line charts
                 const provinces = usageFiltered.map(item => item.province_name);
                 const residentialUsage = usageFiltered.map(item => item.residential_kwh);
                 const residentialUsers = usersFiltered.map(item => item.residential_count);
 
-                renderCharts(provinces, residentialUsage, residentialUsers);
+                // Data for Pie Charts (Aggregate Sums)
+                // Helper to sum a key across the array
+                const sumKey = (arr, key) => arr.reduce((acc, curr) => acc + (Number(curr[key]) || 0), 0);
+
+                const usageMix = [
+                    sumKey(usageFiltered, 'residential_kwh'),
+                    sumKey(usageFiltered, 'small_business_kwh'),
+                    sumKey(usageFiltered, 'medium_business_kwh'),
+                    sumKey(usageFiltered, 'large_business_kwh'),
+                    sumKey(usageFiltered, 'specialized_business_kwh'),
+                    sumKey(usageFiltered, 'public_electricity_kwh')
+                ];
+
+                const usersMix = [
+                    sumKey(usersFiltered, 'residential_count'),
+                    sumKey(usersFiltered, 'small_business_count'),
+                    sumKey(usersFiltered, 'medium_business_count'),
+                    sumKey(usersFiltered, 'large_business_count'),
+                    sumKey(usersFiltered, 'specialized_business_count'),
+                    sumKey(usersFiltered, 'public_electricity_count')
+                ];
+
+                const mixLabels = ['Residential', 'Small Biz', 'Medium Biz', 'Large Biz', 'Specialized', 'Public/Other'];
+                // Modern Palette: Blue, Teal, Amber, Violet, Rose, Slate
+                const mixColors = ['#3b82f6', '#14b8a6', '#f59e0b', '#8b5cf6', '#f43f5e', '#64748b'];
+
+                renderCharts(provinces, residentialUsage, residentialUsers, usageMix, usersMix, mixLabels, mixColors);
             }
 
-            function renderCharts(labels, usage, users) {
-                // Destroy existing charts to prevent overlap
+            function renderCharts(labels, usage, users, usageMixData, usersMixData, pieLabels, pieColors) {
+                // Destroy all old instances
                 if (usageChartInstance) usageChartInstance.destroy();
                 if (usersChartInstance) usersChartInstance.destroy();
+                if (usagePieInstance) usagePieInstance.destroy();
+                if (usersPieInstance) usersPieInstance.destroy();
 
-                const chartOptions = {
+                const commonOptions = {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { legend: { display: false } },
@@ -171,6 +226,16 @@
                     }
                 };
 
+                const pieOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 6 } } 
+                    },
+                    cutout: '60%' // Makes it a doughnut
+                };
+
+                // 1. Bar Chart
                 usageChartInstance = new Chart(document.getElementById('usageChart'), {
                     type: 'bar',
                     data: {
@@ -182,9 +247,10 @@
                             borderRadius: 6
                         }]
                     },
-                    options: chartOptions
+                    options: commonOptions
                 });
 
+                // 2. Line Chart
                 usersChartInstance = new Chart(document.getElementById('usersChart'), {
                     type: 'line',
                     data: {
@@ -199,7 +265,37 @@
                             pointRadius: 4
                         }]
                     },
-                    options: chartOptions
+                    options: commonOptions
+                });
+
+                // 3. Usage Pie Chart
+                usagePieInstance = new Chart(document.getElementById('usagePieChart'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: pieLabels,
+                        datasets: [{
+                            data: usageMixData,
+                            backgroundColor: pieColors,
+                            borderWidth: 0,
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: pieOptions
+                });
+
+                // 4. Users Pie Chart
+                usersPieInstance = new Chart(document.getElementById('usersPieChart'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: pieLabels,
+                        datasets: [{
+                            data: usersMixData,
+                            backgroundColor: pieColors,
+                            borderWidth: 0,
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: pieOptions
                 });
             }
 
